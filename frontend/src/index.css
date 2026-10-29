@@ -1,0 +1,137 @@
+/* ===== Layout fix: remove side gaps ===== */
+html,
+body,
+#root {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: block !important;
+  text-align: left !important;
+  background: #f5f7f4 !important;
+}
+
+.app-shell {
+  width: 100%;
+}
+
+.main-area {
+  width: calc(100% - 245px);
+  margin-left: 245px;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  padding: 18px 32px;
+}
+
+.content {
+  width: 100%;
+  max-width: none;
+  padding: 30px 32px 40px;
+}
+
+/* ===== Nicer cards ===== */
+.overview-stats,
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.overview-stat-card,
+.stat-card {
+  padding: 22px;
+  border: 1px solid #e6ece7;
+  border-radius: 16px;
+  background: #fff;
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(24, 59, 45, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.overview-stat-card:hover,
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(24, 59, 45, 0.08);
+}
+
+.overview-stat-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.overview-stat-value {
+  font-family: "Manrope", sans-serif;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+
+.panel,
+.overview-recent-panel {
+  width: 100%;
+  border-radius: 16px;
+  text-align: left;
+}
+
+.panel > .panel-title,
+.panel > .panel-description {
+  padding-left: 23px;
+  padding-right: 23px;
+}
+
+.panel > .panel-title {
+  padding-top: 21px;
+}
+
+.panel > .panel-description {
+  padding-bottom: 21px;
+}
+
+.overview-table th,
+.overview-table td {
+  padding: 14px 20px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 1000px) {
+  .sidebar {
+    width: 205px;
+  }
+
+  .main-area {
+    width: calc(100% - 205px);
+    margin-left: 205px;
+  }
+
+  .content {
+    padding: 24px 20px;
+  }
+}
+
+@media (max-width: 650px) {
+  .sidebar {
+    width: 270px;
+  }
+
+  .main-area {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .topbar {
+    padding: 14px 15px;
+  }
+
+  .content {
+    padding: 20px 15px;
+  }
+
+  .overview-stats,
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
