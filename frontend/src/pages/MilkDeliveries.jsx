@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 
@@ -23,6 +24,42 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
   const [deliveryError, setDeliveryError] = useState("");
   const [listError, setListError] = useState("");
 
+  // Load delivery history from Supabase
+  async function loadDeliveries() {
+    try {
+      setListLoading(true);
+      setListError("");
+
+      const { data, error } = await supabase
+        .from("milk_deliveries")
+        .select(`
+          id,
+          delivery_date,
+          session,
+          quantity_litres,
+          price_per_litre,
+          status,
+          customers (
+            customer_code,
+            name,
+            phone
+          )
+        `)
+        .order("delivery_date", { ascending: false })
+        .order("id", { ascending: false });
+
+      if (error) throw error;
+
+      setDeliveries(data || []);
+    } catch (error) {
+      console.error("Load deliveries failed:", error);
+      setListError(error.message || "Unable to load delivery records.");
+    } finally {
+      setListLoading(false);
+    }
+  }
+
+  // Load current milk price from Supabase
   async function loadMilkPrice() {
     try {
       const { data, error } = await supabase
@@ -40,28 +77,16 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
     }
   }
 
-  async function loadMilkPrice() {
-    try {
-      const response = await fetch(`${API_URL}/dairy-settings`);
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || "Unable to load milk price.");
-      }
-
-      setMilkPrice(data.milk_price_per_litre);
-    } catch (error) {
-      console.error("Load milk price failed:", error);
-    }
-  }
-
+  // Load data when page opens
   useEffect(() => {
     loadDeliveries();
     loadMilkPrice();
   }, []);
 
+  // Save a new delivery
   async function saveDelivery(event) {
     event.preventDefault();
+
     setDeliveryMessage("");
     setDeliveryError("");
     setDeliveryLoading(true);
@@ -87,10 +112,11 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
 
       if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
         throw new Error(
-          "Quantity must be greater than 0 and at most 100 litres.",
+          "Quantity must be greater than 0 and at most 100 litres."
         );
       }
 
+      // Check customer status
       const { data: customer, error: customerError } = await supabase
         .from("customers")
         .select("id, is_active")
@@ -103,6 +129,7 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
         throw new Error("This customer is inactive.");
       }
 
+      // Get current milk price
       const { data: settings, error: settingsError } = await supabase
         .from("dairy_settings")
         .select("milk_price_per_litre")
@@ -117,6 +144,7 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
         throw new Error("Please check the milk price in dairy settings.");
       }
 
+      // Insert delivery into Supabase
       const { error: insertError } = await supabase
         .from("milk_deliveries")
         .insert({
@@ -131,17 +159,18 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
       if (insertError) {
         if (insertError.code === "23505") {
           throw new Error(
-            "A delivery already exists for this customer, date and session.",
+            "A delivery already exists for this customer, date and session."
           );
         }
 
         throw insertError;
       }
 
-      const charge = deliveryStatus === "Delivered" ? quantity * price : 0;
+      const charge =
+        deliveryStatus === "Delivered" ? quantity * price : 0;
 
       setDeliveryMessage(
-        `Delivery saved successfully! Charge: ₹${charge.toFixed(2)}`,
+        `Delivery saved successfully! Charge: ₹${charge.toFixed(2)}`
       );
 
       setDeliveryQuantity("1");
@@ -155,13 +184,15 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
     }
   }
 
+  // Calculate delivery totals
   const deliveredRecords = deliveries.filter(
-    (delivery) => delivery.status === "Delivered",
+    (delivery) => delivery.status === "Delivered"
   );
 
   const totalLitres = deliveredRecords.reduce(
-    (total, delivery) => total + Number(delivery.quantity_litres || 0),
-    0,
+    (total, delivery) =>
+      total + Number(delivery.quantity_litres || 0),
+    0
   );
 
   const totalCharges = deliveredRecords.reduce(
@@ -169,7 +200,7 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
       total +
       Number(delivery.quantity_litres || 0) *
         Number(delivery.price_per_litre || 0),
-    0,
+    0
   );
 
   return (
@@ -188,7 +219,8 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
           <div>
             <h3 className="panel-title">Record a delivery</h3>
             <p className="panel-description">
-              Current milk price: ₹{Number(milkPrice || 0).toFixed(2)} per litre
+              Current milk price: ₹
+              {Number(milkPrice || 0).toFixed(2)} per litre
             </p>
           </div>
         </div>
@@ -199,10 +231,13 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
             <select
               id="delivery-customer"
               value={deliveryCustomerId}
-              onChange={(event) => setDeliveryCustomerId(event.target.value)}
+              onChange={(event) =>
+                setDeliveryCustomerId(event.target.value)
+              }
               required
             >
               <option value="">Select customer</option>
+
               {customers.map((customer) => (
                 <option key={customer.id} value={customer.id}>
                   {customer.customer_code || "ID pending"} — {customer.name}
@@ -244,7 +279,9 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
               max="100"
               step="0.1"
               value={deliveryQuantity}
-              onChange={(event) => setDeliveryQuantity(event.target.value)}
+              onChange={(event) =>
+                setDeliveryQuantity(event.target.value)
+              }
               required
             />
           </div>
@@ -293,7 +330,9 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
           <div className="message success">{deliveryMessage}</div>
         )}
 
-        {deliveryError && <div className="message error">{deliveryError}</div>}
+        {deliveryError && (
+          <div className="message error">{deliveryError}</div>
+        )}
       </section>
 
       <section className="overview-stats">
@@ -305,14 +344,20 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
 
         <div className="overview-stat-card">
           <div className="overview-stat-label">Delivered milk</div>
-          <div className="overview-stat-value">{totalLitres.toFixed(1)} L</div>
+          <div className="overview-stat-value">
+            {totalLitres.toFixed(1)} L
+          </div>
           <div className="overview-stat-note">Delivered records only</div>
         </div>
 
         <div className="overview-stat-card">
           <div className="overview-stat-label">Delivery charges</div>
-          <div className="overview-stat-value">₹{totalCharges.toFixed(2)}</div>
-          <div className="overview-stat-note">Charges for delivered milk</div>
+          <div className="overview-stat-value">
+            ₹{totalCharges.toFixed(2)}
+          </div>
+          <div className="overview-stat-note">
+            Charges for delivered milk
+          </div>
         </div>
       </section>
 
@@ -335,7 +380,9 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
           </button>
         </div>
 
-        {listError && <div className="message error">{listError}</div>}
+        {listError && (
+          <div className="message error">{listError}</div>
+        )}
 
         <div className="overview-table-wrapper">
           <table className="overview-table">
@@ -370,13 +417,21 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
                 deliveries.map((delivery) => (
                   <tr key={delivery.id}>
                     <td>{delivery.delivery_date}</td>
-                    <td>{delivery.customers?.customer_code || "ID pending"}</td>
-                    <td>{delivery.customers?.name || "Unknown customer"}</td>
+                    <td>
+                      {delivery.customers?.customer_code || "ID pending"}
+                    </td>
+                    <td>
+                      {delivery.customers?.name || "Unknown customer"}
+                    </td>
                     <td>{delivery.customers?.phone || "—"}</td>
                     <td>{delivery.session}</td>
-                    <td>{Number(delivery.quantity_litres).toFixed(1)} L</td>
+                    <td>
+                      {Number(delivery.quantity_litres).toFixed(1)} L
+                    </td>
                     <td>{delivery.status}</td>
-                    <td>₹{Number(delivery.price_per_litre).toFixed(2)}</td>
+                    <td>
+                      ₹{Number(delivery.price_per_litre).toFixed(2)}
+                    </td>
                     <td>
                       ₹
                       {(delivery.status === "Delivered"
