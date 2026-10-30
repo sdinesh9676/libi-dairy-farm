@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import "./App.css";
+import { supabase } from "./supabaseClient";
 import Overview from "./pages/Overview";
 import Customers from "./pages/Customers";
 import MilkDeliveries from "./pages/MilkDeliveries";
@@ -32,38 +33,75 @@ function App() {
   const [deliveryMessage, setDeliveryMessage] = useState("");
   const [deliveryError, setDeliveryError] = useState("");
   const [deliveryLoading, setDeliveryLoading] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(
-    localStorage.getItem("adminToken") === "logged-in",
-  );
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkSession() {
+      const { data, error } = await supabase.auth.getSession();
+
+      if (mounted) {
+        if (error) {
+          console.error("Session check failed:", error.message);
+        }
+
+        setSession(data?.session ?? null);
+        setAuthLoading(false);
+      }
+    }
+
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   function navigateTo(page) {
     setActivePage(page);
     setMobileMenuOpen(false);
   }
-  function handleLogin() {
-    localStorage.setItem("adminToken", "logged-in");
-    setIsLoggedIn(true);
+  function handleLogin(newSession) {
+    setSession(newSession);
   }
 
-  function handleLogout() {
-    localStorage.removeItem("adminToken");
-    setIsLoggedIn(false);
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error("Logout failed:", error.message);
+    }
   }
 
   async function loadCustomers() {
     setListLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/customers");
-      const data = await response.json();
+      const { data, error } = await supabase
+        .from("customers")
+        .select(
+          "id, customer_code, name, phone, delivery_time, quantity_litres, frequency, is_active, created_at",
+        )
+        .order("id", { ascending: false });
 
-      if (!response.ok) {
-        throw new Error(data.message || "Unable to load customers.");
+      if (error) {
+        throw error;
       }
 
-      setCustomers(Array.isArray(data) ? data : data.customers || []);
+      setCustomers(data || []);
       setError("");
     } catch (err) {
+      console.error("Load customers error:", err);
       setError(err.message || "Unable to load customers.");
     } finally {
       setListLoading(false);
@@ -71,21 +109,27 @@ function App() {
   }
 
   useEffect(() => {
-    loadCustomers();
-  }, []);
+    if (session) {
+      loadCustomers();
+    }
+  }, [session]);
 
   async function loadMilkPrice() {
     try {
-      const response = await fetch("http://localhost:5000/api/dairy-settings");
-      const data = await response.json();
+      const { data, error } = await supabase
+        .from("dairy_settings")
+        .select("milk_price_per_litre")
+        .eq("id", 1)
+        .single();
 
-      if (!response.ok) {
-        throw new Error(data.message || "Unable to load milk price.");
+      if (error) {
+        throw error;
       }
 
       setMilkPrice(Number(data.milk_price_per_litre));
       setDeliveryError("");
     } catch (err) {
+      console.error("Load milk price error:", err);
       setDeliveryError(err.message || "Unable to load milk price.");
     }
   }
@@ -103,33 +147,95 @@ function App() {
     setDeliveryLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/deliveries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customer_id: deliveryCustomerId,
+      if (!deliveryCustomerId) {
+        throw new Error("Please select a customer.");
+      }
+
+      if (!deliveryDate) {
+        throw new Error("Please select a delivery date.");
+      }
+
+      if (!["Morning", "Evening"].includes(deliverySession)) {
+        throw new Error("Please select a valid delivery session.");
+      }
+
+      if (!["Delivered", "Skipped", "Not delivered"].includes(deliveryStatus)) {
+        throw new Error("Please select a valid delivery status.");
+      }
+
+      const quantity = Number(deliveryQuantity);
+
+      if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
+        throw new Error(
+          "Quantity must be greater than 0 and at most 100 litres.",
+        );
+      }
+
+      // Check whether the customer exists and is active
+      const { data: customer, error: customerError } = await supabase
+        .from("customers")
+        .select("id, is_active")
+        .eq("id", Number(deliveryCustomerId))
+        .single();
+
+      if (customerError) {
+        throw customerError;
+      }
+
+      if (!customer.is_active) {
+        throw new Error("This customer is inactive.");
+      }
+
+      // Get the current milk price
+      const { data: settings, error: settingsError } = await supabase
+        .from("dairy_settings")
+        .select("milk_price_per_litre")
+        .eq("id", 1)
+        .single();
+
+      if (settingsError) {
+        throw settingsError;
+      }
+
+      const price = Number(settings.milk_price_per_litre);
+
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new Error("Invalid milk price. Please check dairy settings.");
+      }
+
+      // Save delivery
+      const { data: delivery, error: deliveryError } = await supabase
+        .from("milk_deliveries")
+        .insert({
+          customer_id: Number(deliveryCustomerId),
           delivery_date: deliveryDate,
           session: deliverySession,
-          quantity_litres: Number(deliveryQuantity),
+          quantity_litres: quantity,
+          price_per_litre: price,
           status: deliveryStatus,
-        }),
-      });
+        })
+        .select()
+        .single();
 
-      const data = await response.json();
+      if (deliveryError) {
+        if (deliveryError.code === "23505") {
+          throw new Error(
+            "A delivery already exists for this customer, date and session.",
+          );
+        }
 
-      if (!response.ok) {
-        throw new Error(data.message || "Unable to save delivery.");
+        throw deliveryError;
       }
 
       const charge =
-        data.delivery.status === "Delivered"
-          ? Number(data.delivery.quantity_litres) *
-            Number(data.delivery.price_per_litre)
+        delivery.status === "Delivered"
+          ? Number(delivery.quantity_litres) * Number(delivery.price_per_litre)
           : 0;
 
       setDeliveryMessage(`Delivery saved! Charge: ₹${charge.toFixed(2)}`);
       setDeliveryQuantity("1");
     } catch (err) {
+      console.error("Save delivery error:", err);
       setDeliveryError(err.message || "Unable to save delivery.");
     } finally {
       setDeliveryLoading(false);
@@ -143,32 +249,69 @@ function App() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          phone,
-          delivery_time: deliveryTime,
-          quantity_litres: Number(quantityLitres),
-          frequency,
-        }),
-      });
+      // Basic form validation
+      if (!name.trim()) {
+        throw new Error("Please enter the customer's name.");
+      }
 
-      const data = await response.json();
+      if (!/^[6-9]\d{9}$/.test(phone.trim())) {
+        throw new Error("Please enter a valid 10-digit Indian mobile number.");
+      }
 
-      if (!response.ok) {
-        const validationErrors = data.errors
-          ?.map((item) => item.message)
-          .join(" ");
+      if (!deliveryTime) {
+        throw new Error("Please select a delivery time.");
+      }
 
+      const quantity = Number(quantityLitres);
+
+      if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
         throw new Error(
-          validationErrors || data.message || "Unable to save customer.",
+          "Milk quantity must be greater than 0 and at most 100 litres.",
         );
       }
 
+      if (!["Daily", "Day by day"].includes(frequency)) {
+        throw new Error("Please select a valid delivery frequency.");
+      }
+
+      // Generate customer ID
+      const { data: sequenceNumber, error: sequenceError } = await supabase.rpc(
+        "next_customer_number",
+      );
+
+      if (sequenceError) {
+        throw sequenceError;
+      }
+
+      const prefix =
+        deliveryTime === "Morning"
+          ? "KUST_M"
+          : deliveryTime === "Evening"
+            ? "KUST_E"
+            : "KUST_B";
+
+      const customerCode = `${prefix}_${String(sequenceNumber).padStart(6, "0")}`;
+
+      // Save customer directly to Supabase
+      const { data, error } = await supabase
+        .from("customers")
+        .insert({
+          customer_code: customerCode,
+          name: name.trim(),
+          phone: phone.trim(),
+          delivery_time: deliveryTime,
+          quantity_litres: quantity,
+          frequency: frequency,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
       setMessage(
-        `${data.customer.name} has been added successfully. Customer ID: ${data.customer.customer_code}`,
+        `${data.name} has been added successfully. Customer ID: ${data.customer_code}`,
       );
 
       setName("");
@@ -179,7 +322,12 @@ function App() {
 
       await loadCustomers();
     } catch (err) {
-      setError(err.message || "Unable to save customer.");
+      console.error("Add customer error:", err);
+      setError(
+        err.code === "23505"
+          ? "This mobile number or customer ID is already registered."
+          : err.message || "Unable to save customer.",
+      );
     } finally {
       setLoading(false);
     }
@@ -300,7 +448,11 @@ function App() {
     );
   }
 
-  if (!isLoggedIn) {
+  if (authLoading) {
+    return <div>Checking login...</div>;
+  }
+
+  if (!session) {
     return <Login onLogin={handleLogin} />;
   }
 
@@ -342,10 +494,7 @@ function App() {
           <button
             type="button"
             className="logout-button"
-            onClick={() => {
-              localStorage.removeItem("adminToken");
-              window.location.href = "/";
-            }}
+            onClick={handleLogout}
           >
             ↪ Logout
           </button>

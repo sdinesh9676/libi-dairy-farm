@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-
-const API_URL = "http://localhost:5000/api";
+import { supabase } from "../supabaseClient";
 
 function money(value) {
   return new Intl.NumberFormat("en-IN", {
@@ -82,15 +81,15 @@ export default function BillingPayments() {
         setLoadingCustomers(true);
         setError("");
 
-        const response = await fetch(`${API_URL}/customers`);
-        const result = await response.json();
+        const { data, error } = await supabase
+          .from("customers")
+          .select("id, customer_code, name, phone, is_active")
+          .order("name", { ascending: true });
 
-        if (!response.ok || !result.success) {
-          throw new Error(result.message || "Unable to load customers.");
-        }
+        if (error) throw error;
 
         if (!cancelled) {
-          setCustomers(result.customers || []);
+          setCustomers(data || []);
         }
       } catch (err) {
         if (!cancelled) {
@@ -125,20 +124,34 @@ export default function BillingPayments() {
         setError("");
         setCustomerDetails(null);
 
-        const response = await fetch(
-          `${API_URL}/customers/${customerId}/details`,
-        );
-        const result = await response.json();
+        const [deliveryResult, paymentResult] = await Promise.all([
+          supabase
+            .from("milk_deliveries")
+            .select(
+              "id, delivery_date, session, quantity_litres, price_per_litre, status",
+            )
+            .eq("customer_id", Number(customerId))
+            .order("delivery_date", { ascending: true }),
 
-        if (!response.ok || !result.success) {
-          throw new Error(result.message || "Unable to load customer bill.");
-        }
+          supabase
+            .from("customer_payments")
+            .select("id, payment_date, amount, notes")
+            .eq("customer_id", Number(customerId))
+            .order("payment_date", { ascending: true }),
+        ]);
+
+        if (deliveryResult.error) throw deliveryResult.error;
+        if (paymentResult.error) throw paymentResult.error;
 
         if (!cancelled) {
-          setCustomerDetails(result);
+          setCustomerDetails({
+            deliveries: deliveryResult.data || [],
+            payments: paymentResult.data || [],
+          });
         }
       } catch (err) {
         if (!cancelled) {
+          console.error("Load customer bill error:", err);
           setError(err.message || "Unable to load customer bill.");
         }
       } finally {

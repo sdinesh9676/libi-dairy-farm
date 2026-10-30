@@ -1,6 +1,5 @@
 import { useState } from "react";
-
-const API_URL = "http://localhost:5000/api";
+import { supabase } from "../supabaseClient";
 
 function Customers({
   customers,
@@ -31,8 +30,6 @@ function Customers({
   async function changeCustomerStatus(customer) {
     const currentlyActive = customer.is_active !== false;
 
-    const action = currentlyActive ? "deactivate" : "reactivate";
-
     const confirmed = window.confirm(
       currentlyActive
         ? `Stop deliveries for ${customer.name}? Their previous delivery and payment history will be preserved.`
@@ -46,32 +43,27 @@ function Customers({
     setStatusError("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/customers/${customer.id}/status`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            is_active: !currentlyActive,
-          }),
-        },
-      );
+      const { error } = await supabase
+        .from("customers")
+        .update({ is_active: !currentlyActive })
+        .eq("id", customer.id);
 
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || "Unable to update customer status.");
+      if (error) {
+        throw error;
       }
 
-      setStatusMessage(result.message || "Customer status updated.");
+      setStatusMessage(
+        currentlyActive
+          ? "Customer deactivated successfully."
+          : "Customer reactivated successfully.",
+      );
 
       if (refreshCustomers) {
         await refreshCustomers();
       }
     } catch (err) {
-      setStatusError(err.message || "Something went wrong.");
+      console.error("Customer status update error:", err);
+      setStatusError(err.message || "Unable to update customer status.");
     } finally {
       setStatusLoadingId(null);
     }

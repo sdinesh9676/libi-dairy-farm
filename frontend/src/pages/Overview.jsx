@@ -1,7 +1,6 @@
 
 import { useEffect, useState } from "react";
-
-const API_URL = "http://localhost:5000/api";
+import { supabase } from "../supabaseClient";
 
 function Overview() {
   const [customers, setCustomers] = useState([]);
@@ -14,25 +13,21 @@ function Overview() {
         setLoading(true);
         setError("");
 
-        const response = await fetch(`${API_URL}/customers`);
-        const result = await response.json();
+        const { data, error } = await supabase
+          .from("customers")
+          .select(
+            "id, customer_code, name, phone, delivery_time, created_at"
+          )
+          .order("created_at", { ascending: false });
 
-        if (!response.ok || result.success === false) {
-          throw new Error(result.message || "Unable to load customers.");
+        if (error) {
+          throw error;
         }
 
-        // Supports either an array response or { customers: [...] }.
-        const customerList = Array.isArray(result)
-          ? result
-          : result.customers;
-
-        if (!Array.isArray(customerList)) {
-          throw new Error("The customers API returned an unexpected response.");
-        }
-
-        setCustomers(customerList);
+        setCustomers(data || []);
       } catch (err) {
-        setError(err.message || "Unable to connect to the backend.");
+        console.error("Overview loading error:", err);
+        setError(err.message || "Unable to load customers.");
       } finally {
         setLoading(false);
       }
@@ -53,13 +48,7 @@ function Overview() {
     )
   ).length;
 
-  const recentCustomers = [...customers]
-    .sort(
-      (a, b) =>
-        new Date(b.created_at || 0).getTime() -
-        new Date(a.created_at || 0).getTime()
-    )
-    .slice(0, 5);
+  const recentCustomers = customers.slice(0, 5);
 
   return (
     <div className="page-container">
@@ -75,9 +64,6 @@ function Overview() {
       {error && (
         <div className="message error" role="alert">
           {error}
-          <p>
-            Make sure your backend is running on port 5000.
-          </p>
         </div>
       )}
 
@@ -97,9 +83,7 @@ function Overview() {
           <h3 className="overview-stat-value">
             {loading ? "..." : morningCustomers}
           </h3>
-          <p className="overview-stat-note">
-            Morning or both sessions
-          </p>
+          <p className="overview-stat-note">Morning or both sessions</p>
         </article>
 
         <article className="overview-stat-card">
@@ -108,9 +92,7 @@ function Overview() {
           <h3 className="overview-stat-value">
             {loading ? "..." : eveningCustomers}
           </h3>
-          <p className="overview-stat-note">
-            Evening or both sessions
-          </p>
+          <p className="overview-stat-note">Evening or both sessions</p>
         </article>
 
         <article className="overview-stat-card">
@@ -119,9 +101,7 @@ function Overview() {
           <h3 className="overview-stat-value">
             {loading ? "..." : customers.length}
           </h3>
-          <p className="overview-stat-note">
-            Stored in your database
-          </p>
+          <p className="overview-stat-note">Stored in your database</p>
         </article>
       </section>
 

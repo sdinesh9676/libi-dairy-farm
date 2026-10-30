@@ -1,7 +1,5 @@
-
 import { useEffect, useState } from "react";
-
-const API_URL = "http://localhost:5000/api";
+import { supabase } from "../supabaseClient";
 
 function getToday() {
   const date = new Date();
@@ -25,26 +23,20 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
   const [deliveryError, setDeliveryError] = useState("");
   const [listError, setListError] = useState("");
 
-  async function loadDeliveries() {
-    setListLoading(true);
-    setListError("");
-
+  async function loadMilkPrice() {
     try {
-      const response = await fetch(`${API_URL}/deliveries`);
-      const data = await response.json();
+      const { data, error } = await supabase
+        .from("dairy_settings")
+        .select("milk_price_per_litre")
+        .eq("id", 1)
+        .single();
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || "Unable to load delivery records.");
-      }
+      if (error) throw error;
 
-      setDeliveries(data.deliveries || []);
+      setMilkPrice(Number(data.milk_price_per_litre));
     } catch (error) {
-      console.error("Load deliveries failed:", error);
-      setListError(
-        "Could not load delivery history. Check whether the backend is running."
-      );
-    } finally {
-      setListLoading(false);
+      console.error("Load milk price failed:", error);
+      setDeliveryError(error.message || "Unable to load milk price.");
     }
   }
 
@@ -75,35 +67,84 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
     setDeliveryLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/deliveries`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          customer_id: deliveryCustomerId,
-          delivery_date: deliveryDate,
-          session: deliverySession,
-          quantity_litres: Number(deliveryQuantity),
-          status: deliveryStatus,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || "Unable to save delivery.");
+      if (!deliveryCustomerId) {
+        throw new Error("Please select a customer.");
       }
 
+      if (!deliveryDate) {
+        throw new Error("Please select a delivery date.");
+      }
+
+      if (!["Morning", "Evening"].includes(deliverySession)) {
+        throw new Error("Please select a valid session.");
+      }
+
+      if (!["Delivered", "Skipped", "Not delivered"].includes(deliveryStatus)) {
+        throw new Error("Please select a valid delivery status.");
+      }
+
+      const quantity = Number(deliveryQuantity);
+
+      if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
+        throw new Error(
+          "Quantity must be greater than 0 and at most 100 litres.",
+        );
+      }
+
+      const { data: customer, error: customerError } = await supabase
+        .from("customers")
+        .select("id, is_active")
+        .eq("id", Number(deliveryCustomerId))
+        .single();
+
+      if (customerError) throw customerError;
+
+      if (!customer.is_active) {
+        throw new Error("This customer is inactive.");
+      }
+
+      const { data: settings, error: settingsError } = await supabase
+        .from("dairy_settings")
+        .select("milk_price_per_litre")
+        .eq("id", 1)
+        .single();
+
+      if (settingsError) throw settingsError;
+
+      const price = Number(settings.milk_price_per_litre);
+
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new Error("Please check the milk price in dairy settings.");
+      }
+
+      const { error: insertError } = await supabase
+        .from("milk_deliveries")
+        .insert({
+          customer_id: Number(deliveryCustomerId),
+          delivery_date: deliveryDate,
+          session: deliverySession,
+          quantity_litres: quantity,
+          price_per_litre: price,
+          status: deliveryStatus,
+        });
+
+      if (insertError) {
+        if (insertError.code === "23505") {
+          throw new Error(
+            "A delivery already exists for this customer, date and session.",
+          );
+        }
+
+        throw insertError;
+      }
+
+      const charge = deliveryStatus === "Delivered" ? quantity * price : 0;
+
       setDeliveryMessage(
-        `Delivery saved successfully! Charge: ₹${
-          deliveryStatus === "Delivered"
-            ? (
-                Number(deliveryQuantity) * Number(milkPrice)
-              ).toFixed(2)
-            : "0.00"
-        }`
+        `Delivery saved successfully! Charge: ₹${charge.toFixed(2)}`,
       );
+
+      setDeliveryQuantity("1");
 
       await loadDeliveries();
     } catch (error) {
@@ -115,12 +156,12 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
   }
 
   const deliveredRecords = deliveries.filter(
-    (delivery) => delivery.status === "Delivered"
+    (delivery) => delivery.status === "Delivered",
   );
 
   const totalLitres = deliveredRecords.reduce(
     (total, delivery) => total + Number(delivery.quantity_litres || 0),
-    0
+    0,
   );
 
   const totalCharges = deliveredRecords.reduce(
@@ -128,7 +169,7 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
       total +
       Number(delivery.quantity_litres || 0) *
         Number(delivery.price_per_litre || 0),
-    0
+    0,
   );
 
   return (
@@ -226,10 +267,9 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
             <label>Calculated charge</label>
             <p>
               ₹
-              {(
-                deliveryStatus === "Delivered"
-                  ? Number(deliveryQuantity || 0) * Number(milkPrice || 0)
-                  : 0
+              {(deliveryStatus === "Delivered"
+                ? Number(deliveryQuantity || 0) * Number(milkPrice || 0)
+                : 0
               ).toFixed(2)}
             </p>
           </div>
@@ -253,9 +293,7 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
           <div className="message success">{deliveryMessage}</div>
         )}
 
-        {deliveryError && (
-          <div className="message error">{deliveryError}</div>
-        )}
+        {deliveryError && <div className="message error">{deliveryError}</div>}
       </section>
 
       <section className="overview-stats">
@@ -267,17 +305,13 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
 
         <div className="overview-stat-card">
           <div className="overview-stat-label">Delivered milk</div>
-          <div className="overview-stat-value">
-            {totalLitres.toFixed(1)} L
-          </div>
+          <div className="overview-stat-value">{totalLitres.toFixed(1)} L</div>
           <div className="overview-stat-note">Delivered records only</div>
         </div>
 
         <div className="overview-stat-card">
           <div className="overview-stat-label">Delivery charges</div>
-          <div className="overview-stat-value">
-            ₹{totalCharges.toFixed(2)}
-          </div>
+          <div className="overview-stat-value">₹{totalCharges.toFixed(2)}</div>
           <div className="overview-stat-note">Charges for delivered milk</div>
         </div>
       </section>
@@ -336,26 +370,19 @@ function MilkDeliveries({ customers = [], milkPrice, setMilkPrice }) {
                 deliveries.map((delivery) => (
                   <tr key={delivery.id}>
                     <td>{delivery.delivery_date}</td>
-                    <td>
-                      {delivery.customers?.customer_code || "ID pending"}
-                    </td>
+                    <td>{delivery.customers?.customer_code || "ID pending"}</td>
                     <td>{delivery.customers?.name || "Unknown customer"}</td>
                     <td>{delivery.customers?.phone || "—"}</td>
                     <td>{delivery.session}</td>
-                    <td>
-                      {Number(delivery.quantity_litres).toFixed(1)} L
-                    </td>
+                    <td>{Number(delivery.quantity_litres).toFixed(1)} L</td>
                     <td>{delivery.status}</td>
-                    <td>
-                      ₹{Number(delivery.price_per_litre).toFixed(2)}
-                    </td>
+                    <td>₹{Number(delivery.price_per_litre).toFixed(2)}</td>
                     <td>
                       ₹
-                      {(
-                        delivery.status === "Delivered"
-                          ? Number(delivery.quantity_litres) *
-                            Number(delivery.price_per_litre)
-                          : 0
+                      {(delivery.status === "Delivered"
+                        ? Number(delivery.quantity_litres) *
+                          Number(delivery.price_per_litre)
+                        : 0
                       ).toFixed(2)}
                     </td>
                   </tr>
